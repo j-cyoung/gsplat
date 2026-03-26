@@ -16,6 +16,29 @@ bash build_fash.sh
 pip install -e .[dev]
 ```
 
+### Build-time Render Switches
+
+The CUDA extension supports two compile-time switches:
+
+- `GSPLAT_ENABLE_PREFILTER=1|0`
+  Controls the covariance prefilter / minimum-footprint blur used in the modified gsplat projection path.
+- `GSPLAT_ENABLE_SSAA=1|0`
+  Controls the 2x2 supersampling path used by the batch `rasterize_sum` kernel.
+
+Both switches default to `1`.
+
+Examples:
+
+```bash
+GSPLAT_ENABLE_PREFILTER=1 GSPLAT_ENABLE_SSAA=1 python -m pip install -e . --no-build-isolation
+```
+
+```bash
+GSPLAT_ENABLE_PREFILTER=0 GSPLAT_ENABLE_SSAA=0 python -m pip install -e . --no-build-isolation
+```
+
+If you switch options between runs, rebuild the extension in the same environment that executes your rendering script.
+
 For more detail development instructions, please refer to *./docs/DEV.md*.
 
 ## Acknowledgments

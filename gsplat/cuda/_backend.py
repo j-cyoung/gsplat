@@ -10,6 +10,17 @@ from torch.utils.cpp_extension import _get_build_directory, load
 PATH = os.path.dirname(os.path.abspath(__file__))
 
 
+def _env_flag(name: str, default: int) -> int:
+    value = os.getenv(name, str(default)).strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return 1
+    if value in ("0", "false", "no", "off"):
+        return 0
+    raise ValueError(
+        f"Invalid value for {name}: {value!r}. Expected one of 0/1/true/false/on/off."
+    )
+
+
 def cuda_toolkit_available():
     """Check if the nvcc is avaiable on the machine."""
     try:
@@ -36,8 +47,18 @@ def cuda_toolkit_version():
 name = "gsplat_cuda"
 build_dir = _get_build_directory(name, verbose=False)
 extra_include_paths = [os.path.join(PATH, "csrc/third_party/glm")]
-extra_cflags = ["-O3"]
-extra_cuda_cflags = ["-O3"]
+ENABLE_PREFILTER = _env_flag("GSPLAT_ENABLE_PREFILTER", 1)
+ENABLE_SSAA = _env_flag("GSPLAT_ENABLE_SSAA", 1)
+extra_cflags = [
+    "-O3",
+    f"-DGSPLAT_ENABLE_PREFILTER={ENABLE_PREFILTER}",
+    f"-DGSPLAT_ENABLE_SSAA={ENABLE_SSAA}",
+]
+extra_cuda_cflags = [
+    "-O3",
+    f"-DGSPLAT_ENABLE_PREFILTER={ENABLE_PREFILTER}",
+    f"-DGSPLAT_ENABLE_SSAA={ENABLE_SSAA}",
+]
 
 _C = None
 sources = list(glob.glob(os.path.join(PATH, "csrc/*.cu"))) + list(

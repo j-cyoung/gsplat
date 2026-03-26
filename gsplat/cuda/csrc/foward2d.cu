@@ -47,13 +47,15 @@ __global__ void project_gaussians_2d_forward_kernel(
     // float2x2 Cov2D = make_float2x2(l11*l11, l11*l21,
                                 //    l11*l21, l21*l21 + l22*l22);
     float3 cov2d = make_float3(l11*l11, l11*l21, l21*l21 + l22*l22);
-    // === 新增：像素面积预滤波 (box filter) ===
-    const float px_var = 1.0f / 12.0f;   // 每轴方差
-    cov2d.x += px_var;                   // Σ_xx += 1/12
-    cov2d.z += px_var;                   // Σ_yy += 1/12
-    const float min_var = 0.25f * 0.25f; // 0.25px 的最小模糊
+#if GSPLAT_ENABLE_PREFILTER
+    // Optional pixel-area prefilter to stabilize very small 2D splats.
+    const float px_var = 1.0f / 12.0f;
+    cov2d.x += px_var;
+    cov2d.z += px_var;
+    const float min_var = 0.25f * 0.25f;
     cov2d.x = fmaxf(cov2d.x, min_var);
     cov2d.z = fmaxf(cov2d.z, min_var);
+#endif
     // printf("cov2d %d, %.2f %.2f %.2f\n", idx, cov2d.x, cov2d.y, cov2d.z);
     float3 conic;
     float radius;

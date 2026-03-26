@@ -24,40 +24,37 @@ __global__ void project_gaussians_2d_backward_kernel(
         return;
     }
 
-    // ==== 1) 从 v_conic 反传到 clamp 之后的 Σ'' ====
-    float3 v_cov_after_clamp;
-    cov2d_to_conic_vjp(conics[idx], v_conic[idx], v_cov_after_clamp);  // dL/dΣ''
+    // ==== 1) 从 v_conic 反传到最终参与 rasterize 的 Σ ====
+    float3 v_cov_from_conic;
+    cov2d_to_conic_vjp(conics[idx], v_conic[idx], v_cov_from_conic);
 
-    // ==== 2) 穿过 clamp 与 “+ px_var·I” ====
-    // 先在 backward 重建 forward 里的 Σ（未加像素方差）与 Σ'（加像素方差）
     const float l11 = L_elements[idx].x;
     const float l21 = L_elements[idx].y;
     const float l22 = L_elements[idx].z;
 
-    // Σ（未滤波）
-    float sigma_xx = l11 * l11;
-    float sigma_xy = l11 * l21;
-    float sigma_yy = l21 * l21 + l22 * l22;
+#if GSPLAT_ENABLE_PREFILTER
+    // Match the optional forward-side pixel-area prefilter and min-footprint clamp.
+    const float sigma_xx = l11 * l11;
+    const float sigma_yy = l21 * l21 + l22 * l22;
+    const float px_var = 1.0f / 12.0f;
+    const float min_var = 0.25f * 0.25f;
+    const float sigma_xx_p = sigma_xx + px_var;
+    const float sigma_yy_p = sigma_yy + px_var;
 
-    // 与 forward 对齐的常量
-    const float px_var = 1.0f / 12.0f;     // box 1×1 像素的轴向方差
-    const float min_var = 0.25f * 0.25f;   // 最小 footprint
-
-    // Σ' = Σ + px_var·I
-    float sigma_xx_p = sigma_xx + px_var;
-    float sigma_yy_p = sigma_yy + px_var;
-
-    // clamp 的门控：被 clamp 的对角项不回传梯度
-    const float3 v_cov_before_clamp = make_float3(
-        (sigma_xx_p > min_var) ? v_cov_after_clamp.x : 0.0f, // dL/dΣ'_{xx}
-        v_cov_after_clamp.y,                                  // dL/dΣ'_{xy}（不受 clamp）
-        (sigma_yy_p > min_var) ? v_cov_after_clamp.z : 0.0f   // dL/dΣ'_{yy}
+    const float3 v_cov_before_filter = make_float3(
+        (sigma_xx_p > min_var) ? v_cov_from_conic.x : 0.0f,
+        v_cov_from_conic.y,
+        (sigma_yy_p > min_var) ? v_cov_from_conic.z : 0.0f
     );
 
-    // 经过 “+ px_var·I” 不产生梯度（常数项），因此 dL/dΣ = dL/dΣ'
-    const float G_11 = v_cov_before_clamp.x;  // dL/dΣ_{xx}
-    const float G_12 = v_cov_before_clamp.y;  // dL/dΣ_{xy}（代表 Σ12 与 Σ21 的合并项）
-    const float G_22 = v_cov_before_clamp.z;  // dL/dΣ_{yy}
+    const float G_11 = v_cov_before_filter.x;
+    const float G_12 = v_cov_before_filter.y;
+    const float G_22 = v_cov_before_filter.z;
+#else
+    const float G_11 = v_cov_from_conic.x;
+    const float G_12 = v_cov_from_conic.y;
+    const float G_22 = v_cov_from_conic.z;
+#endif
 
     // 可选：把对“未滤波的 Σ”的梯度写回，便于 debug/检查
     v_cov2d[idx].x = G_11;
@@ -143,5 +140,4 @@ __global__ void project_gaussians_2d_scale_rot_backward_kernel(
     v_mean2d[idx].y = v_xy[idx].y * (0.5f * img_size.y);
 
 }
-
 

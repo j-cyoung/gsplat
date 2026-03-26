@@ -1400,9 +1400,24 @@ __global__ void rasterize_batch_backward_sum_kernel(
 
     // --- 3. Read Incoming Gradients for this Pixel ---
     const float3 v_out_total = inside ? v_output[pix_offset] : make_float3(0.0f, 0.0f, 0.0f);
-    // --- SUPERSAMPLING MODIFICATION ---
-    // Distribute the incoming gradient among the 4 samples, as the forward pass was an average.
-    const float3 v_out = {v_out_total.x / 4.0f, v_out_total.y / 4.0f, v_out_total.z / 4.0f};
+#if GSPLAT_ENABLE_SSAA
+    const int num_subsamples = 4;
+    const float2 offsets[4] = {
+        make_float2(0.25f, 0.25f),
+        make_float2(0.75f, 0.25f),
+        make_float2(0.25f, 0.75f),
+        make_float2(0.75f, 0.75f),
+    };
+#else
+    const int num_subsamples = 1;
+    const float2 offsets[1] = {make_float2(0.5f, 0.5f)};
+#endif
+    const float inv_num_subsamples = 1.0f / static_cast<float>(num_subsamples);
+    const float3 v_out = make_float3(
+        v_out_total.x * inv_num_subsamples,
+        v_out_total.y * inv_num_subsamples,
+        v_out_total.z * inv_num_subsamples
+    );
     
     // --- 4. Gradient Accumulation Logic (Largely Reused) ---
     const int bin_final = inside ? final_index[pix_offset] : 0;
@@ -1419,11 +1434,6 @@ __global__ void rasterize_batch_backward_sum_kernel(
     cg::thread_block_tile<32> warp = cg::tiled_partition<32>(block);
     const int warp_bin_final = cg::reduce(warp, bin_final, cg::greater<int>());
     
-    // --- SUPERSAMPLING MODIFICATION ---
-    // Define the 4 sub-pixel offsets for a 2x2 grid.
-    const float2 offsets[4] = {{0.25f, 0.25f}, {0.75f, 0.25f}, {0.25f, 0.75f}, {0.75f, 0.75f}};
-
-
     for (int b = 0; b < num_batches; ++b) {
         block.sync();
 
@@ -1446,8 +1456,6 @@ __global__ void rasterize_batch_backward_sum_kernel(
                 thread_is_valid_for_this_gaussian = true;
             }
 
-            // --- SUPERSAMPLING MODIFICATION ---
-            // These will now accumulate gradients from all 4 sub-pixel samples.
             float3 v_rgb_local = {0.f, 0.f, 0.f};
             float3 v_conic_local = {0.f, 0.f, 0.f};
             float2 v_xy_local = {0.f, 0.f};
@@ -1455,7 +1463,7 @@ __global__ void rasterize_batch_backward_sum_kernel(
 
             if (thread_is_valid_for_this_gaussian) {
                 #pragma unroll
-                for (int s = 0; s < 4; ++s) {
+                for (int s = 0; s < num_subsamples; ++s) {
                     const float spx = (float)px + offsets[s].x;
                     const float spy = (float)py + offsets[s].y;
 

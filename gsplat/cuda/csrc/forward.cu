@@ -892,8 +892,12 @@ __device__ float3 project_cov3d_ewa(
 
     glm::mat3 cov = T * V * glm::transpose(T);
 
-    // add a little blur along axes and save upper triangular elements
+#if GSPLAT_ENABLE_PREFILTER
+    // Optional low-pass footprint used by the original gsplat path.
     return make_float3(float(cov[0][0]) + 0.3f, float(cov[0][1]), float(cov[1][1]) + 0.3f);
+#else
+    return make_float3(float(cov[0][0]), float(cov[0][1]), float(cov[1][1]));
+#endif
 }
 
 // device helper to get 3D covariance from scale and quat parameters
@@ -1054,9 +1058,19 @@ __global__ void rasterize_batch_forward_sum_kernel(
     int tr = threadIdx.y * blockDim.x + threadIdx.x;
     float3 pix_out = {0.f, 0.f, 0.f};
 
-    // --- SUPERSAMPLING MODIFICATION ---
-    // Define the 4 sub-pixel offsets for a 2x2 grid.
-    const float2 offsets[4] = {{0.25f, 0.25f}, {0.75f, 0.25f}, {0.25f, 0.75f}, {0.75f, 0.75f}};
+#if GSPLAT_ENABLE_SSAA
+    const int num_subsamples = 4;
+    const float2 offsets[4] = {
+        make_float2(0.25f, 0.25f),
+        make_float2(0.75f, 0.25f),
+        make_float2(0.25f, 0.75f),
+        make_float2(0.75f, 0.75f),
+    };
+#else
+    const int num_subsamples = 1;
+    const float2 offsets[1] = {make_float2(0.5f, 0.5f)};
+#endif
+    const float inv_num_subsamples = 1.0f / static_cast<float>(num_subsamples);
 
     for (int b = 0; b < num_batches; ++b) {
         if (__syncthreads_count(done) >= blockDim.x * blockDim.y) {
@@ -1083,10 +1097,8 @@ __global__ void rasterize_batch_forward_sum_kernel(
             const int32_t g = id_batch[t];
             const float3 c = colors[g];
 
-            // --- SUPERSAMPLING MODIFICATION ---
-            // Loop over 4 sub-pixel samples
             #pragma unroll
-            for (int s = 0; s < 4; ++s) {
+            for (int s = 0; s < num_subsamples; ++s) {
                 const float spx = (float)px + offsets[s].x;
                 const float spy = (float)py + offsets[s].y;
 
@@ -1121,11 +1133,9 @@ __global__ void rasterize_batch_forward_sum_kernel(
         // Replicating that here. If blending is needed, the formula would change.
         float3 final_color;
 
-        // --- SUPERSAMPLING MODIFICATION ---
-        // Average the color from the 4 samples.
-        final_color.x = pix_out.x / 4.0f; // + T * bg_color.x;
-        final_color.y = pix_out.y / 4.0f; // + T * bg_color.y;
-        final_color.z = pix_out.z / 4.0f; // + T * bg_color.z;
+        final_color.x = pix_out.x * inv_num_subsamples; // + T * bg_color.x;
+        final_color.y = pix_out.y * inv_num_subsamples; // + T * bg_color.y;
+        final_color.z = pix_out.z * inv_num_subsamples; // + T * bg_color.z;
         out_img[pix_offset] = final_color;
     }
 }

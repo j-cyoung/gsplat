@@ -17,6 +17,17 @@ LINE_INFO = os.getenv("LINE_INFO", "0") == "1"
 FAST_BUILD = os.getenv("FAST_BUILD", "0") == "1"
 
 
+def _env_flag(name: str, default: int) -> int:
+    value = os.getenv(name, str(default)).strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return 1
+    if value in ("0", "false", "no", "off"):
+        return 0
+    raise ValueError(
+        f"Invalid value for {name}: {value!r}. Expected one of 0/1/true/false/on/off."
+    )
+
+
 def get_ext():
     from torch.utils.cpp_extension import BuildExtension
     # 默认保持与原始代码一致：False；你可通过 USE_NINJA=1 打开
@@ -29,6 +40,9 @@ def get_extensions():
     import torch
     from torch.__config__ import parallel_info
     from torch.utils.cpp_extension import CUDAExtension
+
+    enable_prefilter = _env_flag("GSPLAT_ENABLE_PREFILTER", 1)
+    enable_ssaa = _env_flag("GSPLAT_ENABLE_SSAA", 1)
 
     extensions_dir = osp.join("gsplat", "cuda", "csrc")
     sources = glob.glob(osp.join(extensions_dir, "*.cu")) + glob.glob(
@@ -51,6 +65,10 @@ def get_extensions():
 
     if sys.platform == "win32":
         define_macros += [("gsplat_EXPORTS", None)]
+    define_macros += [
+        ("GSPLAT_ENABLE_PREFILTER", str(enable_prefilter)),
+        ("GSPLAT_ENABLE_SSAA", str(enable_ssaa)),
+    ]
 
     extra_compile_args = {"cxx": ["-O3"]}
     if not os.name == "nt":  # Not on Windows:
@@ -95,6 +113,12 @@ def get_extensions():
     extra_compile_args["nvcc"] = nvcc_flags
     if sys.platform == "win32":
         extra_compile_args["nvcc"] += ["-DWIN32_LEAN_AND_MEAN"]
+
+    print(
+        "gsplat build flags: "
+        f"GSPLAT_ENABLE_PREFILTER={enable_prefilter}, "
+        f"GSPLAT_ENABLE_SSAA={enable_ssaa}"
+    )
     
     if FAST_BUILD:
         # 将 -O3 替换成 -O2，减少编译时间；加入 NDEBUG
